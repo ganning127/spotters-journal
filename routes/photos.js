@@ -59,7 +59,7 @@ router.get("/my-photos", authenticateToken, async (req, res) => {
 });
 
 router.post("/", authenticateToken, async (req, res) => {
-  const {
+  let {
     registration,
     airport_code,
     image_url,
@@ -69,31 +69,79 @@ router.post("/", authenticateToken, async (req, res) => {
     aperture,
     camera_model,
     focal_length,
-    // New optional fields for new aircraft
-    aircraft_type_id,
-    manufactured_date,
+
+    // SpecificAircraft fields
+    aircraft_type_id, // optional
+    manufactured_date, // optional
+    airline_code, // optional
+
+    // Airport fields (if airport_code is 'other')
+    airport_icao_code, // all below are optional
+    airport_name,
+    airport_latitude,
+    airport_longitude,
   } = req.body;
 
   try {
-    // 1. Upsert the Aircraft
-    // If 'aircraft_type_id' is provided, we update/insert the full record.
-    // If not, we just ensure the registration exists (skeleton entry).
-    const aircraftData = { registration };
+    // in case user is adding a new airport
+    if (airport_code === "other") {
+      if (
+        !airport_icao_code ||
+        !airport_name ||
+        !airport_latitude ||
+        !airport_longitude
+      ) {
+        return res.status(400).json({
+          error: "All airport fields are required for 'other' airport.",
+        });
+      }
 
-    if (aircraft_type_id) aircraftData.type_id = aircraft_type_id;
-    if (manufactured_date) aircraftData.manufactured_date = manufactured_date;
-    console.log("Upserting aircraft data:", aircraftData);
-    const { error: aircraftError } = await supabase
-      .from("SpecificAircraft")
-      .upsert([aircraftData], { onConflict: "registration" });
+      const { error: airportError } = await supabase.from("Airport").insert([
+        {
+          icao_code: airport_icao_code.toUpperCase(),
+          name: airport_name,
+          latitude: parseFloat(airport_latitude),
+          longitude: parseFloat(airport_longitude),
+        },
+      ]);
 
-    if (aircraftError) {
-      throw new Error(
-        `Failed to initialize aircraft: ${aircraftError.message}`,
-      );
+      if (airportError) {
+        return res
+          .status(500)
+          .json({ error: `Failed to insert airport: ${airportError.message}` });
+      }
+
+      airport_code = airport_icao_code.toUpperCase(); // set airport_code to use for the photo
     }
 
-    // 2. Insert Photo (Standard flow)
+    // in case user is adding a new SpecificAircraft
+    if (aircraft_type_id) {
+      // trying to create a new SpecificAircraft
+      if (!manufactured_date) {
+        return res.status(400).json({
+          error:
+            "Manufactured date is required when providing aircraft_type_id.",
+        });
+      }
+
+      const { error: typeError } = await supabase
+        .from("SpecificAircraft")
+        .insert([
+          {
+            registration,
+            type_id: aircraft_type_id,
+            manufactured_date,
+            airline: airline_code,
+          },
+        ]);
+
+      if (typeError) {
+        return res.status(500).json({
+          error: `Failed to insert specific aircraft: ${typeError.message}`,
+        });
+      }
+    }
+
     const { data, error } = await supabase
       .from("Photo")
       .insert([
@@ -102,12 +150,12 @@ router.post("/", authenticateToken, async (req, res) => {
           registration,
           airport_code,
           image_url,
-          taken_at,
-          shutter_speed,
-          iso,
-          aperture,
-          camera_model,
-          focal_length,
+          taken_at: taken_at || null,
+          shutter_speed: shutter_speed || null,
+          iso: iso || null,
+          aperture: aperture || null,
+          camera_model: camera_model || null,
+          focal_length: focal_length || null,
         },
       ])
       .select();
