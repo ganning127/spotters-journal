@@ -7,6 +7,7 @@ const photoRoutes = require("./routes/photos");
 const airportRoutes = require("./routes/airports");
 const aircraftTypeRoutes = require("./routes/aircraftTypes");
 const aircraftRoutes = require("./routes/aircraft");
+const airlineRoutes = require("./routes/airline");
 
 const app = express();
 
@@ -18,6 +19,7 @@ app.use("/api/photos", photoRoutes);
 app.use("/api/airports", airportRoutes);
 app.use("/api/aircraft-types", aircraftTypeRoutes);
 app.use("/api/aircraft", aircraftRoutes);
+app.use("/api/airlines", airlineRoutes);
 
 app.get("/", (req, res) => {
   res.send("Plane Tracker API is running");

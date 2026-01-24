@@ -14,9 +14,27 @@ router.get("/search", authenticateToken, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from("SpecificAircraft")
-      .select("registration, created_at, type_id")
-      .ilike("registration", `${query}%`) // Starts with query, case-insensitive
-      .limit(10); // Limit results to keep it fast
+      .select(
+        `
+        registration, 
+        type_id,
+        Photo!left (         
+          image_url, 
+          taken_at,
+          airport_code
+        )
+      `,
+      )
+      .ilike("registration", `${query}%`)
+      .eq("Photo.user_id", req.user.id)
+      .limit(10);
+
+    // restrict data.Photo to only the first photo (if any)
+    for (let i = 0; i < data.length; i++) {
+      if (data[i].Photo && data[i].Photo.length > 0) {
+        data[i].Photo = [data[i].Photo[0]];
+      }
+    }
 
     if (error) throw error;
     res.json(data);
