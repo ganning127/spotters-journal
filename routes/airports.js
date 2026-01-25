@@ -59,8 +59,6 @@ router.get("/", authenticateToken, async (req, res) => {
         },
       );
 
-      console.log("Recent airports data:", data, "error:", error);
-
       if (error) {
         throw error;
       } else if (data.length == 0) {

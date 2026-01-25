@@ -4,6 +4,54 @@ const router = express.Router();
 const supabase = require("../db");
 const authenticateToken = require("../middleware/authMiddleware");
 
+router.get("/airline-counts", authenticateToken, async (req, res) => {
+  try {
+    const { data, error } = await supabase.rpc("get_airline_counts_by_user", {
+      p_user_id: req.user.id,
+      p_limit: 10,
+    });
+
+    if (error) throw error;
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/airplane-counts", authenticateToken, async (req, res) => {
+  try {
+    const { data, error } = await supabase.rpc("get_airplane_counts_by_user", {
+      p_user_id: req.user.id,
+      p_limit: 8,
+    });
+
+    if (error) throw error;
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/photo-counts", authenticateToken, async (req, res) => {
+  try {
+    const { data, error } = await supabase.rpc(
+      "get_user_photo_counts_by_user_and_by_year",
+      {
+        p_user_id: req.user.id,
+        p_num_years: 5,
+      },
+    );
+
+    if (error) throw error;
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get("/my-photos", authenticateToken, async (req, res) => {
   try {
     // 1. Parse Query Params
