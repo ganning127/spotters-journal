@@ -165,20 +165,13 @@ router.post("/", authenticateToken, async (req, res) => {
     // in case user is adding a new SpecificAircraft
     if (aircraft_type_id) {
       // trying to create a new SpecificAircraft
-      if (!manufactured_date) {
-        return res.status(400).json({
-          error:
-            "Manufactured date is required when providing aircraft_type_id.",
-        });
-      }
-
       const { error: typeError } = await supabase
         .from("SpecificAircraft")
         .insert([
           {
             registration,
             type_id: aircraft_type_id,
-            manufactured_date,
+            manufactured_date: manufactured_date || null,
             airline: airline_code,
           },
         ]);
