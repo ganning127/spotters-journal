@@ -51,7 +51,9 @@ router.get("/", authenticateToken, async (req, res) => {
     const { data, error } = await supabase
       .from("AircraftType")
       .select("*")
-      .order("manufacturer", { ascending: true });
+      .order("manufacturer", { ascending: true }) // First priority
+      .order("type", { ascending: true }) // Second priority
+      .order("variant", { ascending: true }); // Third priority
 
     if (error) throw error;
     res.json(data);
