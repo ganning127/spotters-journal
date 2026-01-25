@@ -21,9 +21,10 @@ router.get("/airline-counts", authenticateToken, async (req, res) => {
 
 router.get("/airplane-counts", authenticateToken, async (req, res) => {
   try {
+    const limit = req.query.limit ? parseInt(req.query.limit) : 8;
     const { data, error } = await supabase.rpc("get_airplane_counts_by_user", {
       p_user_id: req.user.id,
-      p_limit: 8,
+      p_limit: limit,
     });
 
     if (error) throw error;
@@ -58,11 +59,11 @@ router.get("/my-photos", authenticateToken, async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 9; // 9 photos per page
     const search = req.query.search || "";
+    const aircraftTypeFilter = JSON.parse(req.query.aircraftTypeFilter);
 
     // Calculate Supabase Range (0-based index)
     const from = (page - 1) * limit;
     const to = from + limit - 1;
-
     // 2. Build Query
     let query = supabase
       .from("Photo")
@@ -70,8 +71,7 @@ router.get("/my-photos", authenticateToken, async (req, res) => {
         `
         *,
         Airport ( name, icao_code ),
-        SpecificAircraft (
-          registration,
+        SpecificAircraft!inner (
           AircraftType ( manufacturer, type, variant )
         )
       `,
@@ -85,6 +85,11 @@ router.get("/my-photos", authenticateToken, async (req, res) => {
     if (search) {
       // Filter by registration column on the Photo table
       query = query.ilike("registration", `%${search}%`);
+    }
+
+    // 4. Apply Aircraft Type Filter (if provided)
+    if (aircraftTypeFilter && aircraftTypeFilter.length > 0) {
+      query = query.in("SpecificAircraft.type_id", aircraftTypeFilter);
     }
 
     const { data, error, count } = await query;
