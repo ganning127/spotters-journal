@@ -72,7 +72,7 @@ router.get("/my-photos", authenticateToken, async (req, res) => {
         *,
         Airport ( name, icao_code ),
         SpecificAircraft!inner (
-          AircraftType ( manufacturer, type, variant )
+          AircraftType ( id, manufacturer, type, variant )
         )
       `,
         { count: "exact" },
