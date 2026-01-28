@@ -43,11 +43,8 @@ router.get("/search", authenticateToken, async (req, res) => {
         is_new_aircraft: false,
         aircraft: data[0],
       });
+      return;
     }
-
-    res.json({
-      data: forUser,
-    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -55,14 +52,6 @@ router.get("/search", authenticateToken, async (req, res) => {
 
 router.get("/new-registration", authenticateToken, async (req, res) => {
   const query = req.query.q;
-
-  /*
-  returns:
-  {
-    aircraft_type_id: string (icao code),
-    airline_code: string (icao code),
-  }
-    */
 
   if (!query || query.length === 0) {
     return res.json([]);
