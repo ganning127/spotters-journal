@@ -55,7 +55,6 @@ router.get("/photo-counts", authenticateToken, async (req, res) => {
 
 router.get("/my-photos", authenticateToken, async (req, res) => {
   try {
-    // 1. Parse Query Params
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 9; // 9 photos per page
     const search = req.query.search || "";
@@ -107,6 +106,87 @@ router.get("/my-photos", authenticateToken, async (req, res) => {
       },
     });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/my-photos/random", authenticateToken, async (req, res) => {
+  try {
+    const limit = 10;
+    const search = req.query.search || "";
+    const aircraftTypeFilter = JSON.parse(req.query.aircraftTypeFilter);
+
+    const applyFilters = (queryBuilder) => {
+      queryBuilder = queryBuilder.eq("user_id", req.user.id);
+
+      if (search) {
+        // Assuming registration is on the Photo table.
+        // If it's on SpecificAircraft, use "SpecificAircraft.registration" (requires join in the main query)
+        queryBuilder = queryBuilder.ilike("registration", `%${search}%`);
+      }
+
+      if (aircraftTypeFilter && aircraftTypeFilter.length > 0) {
+        // Filter by Inner Join on AircraftType
+        queryBuilder = queryBuilder.in(
+          "SpecificAircraft.AircraftType.type",
+          aircraftTypeFilter,
+        );
+      }
+
+      return queryBuilder;
+    };
+
+    let countQuery = supabase
+      .from("Photo")
+      .select("SpecificAircraft!inner(AircraftType!inner(type))", {
+        count: "exact",
+        head: true,
+      });
+
+    countQuery = applyFilters(countQuery);
+
+    const { count, error: countError } = await countQuery;
+
+    if (countError) throw countError;
+
+    if (count === 0) {
+      return res.json({ data: [], meta: { total: 0, limit } });
+    }
+
+    let randomOffset = 0;
+    if (count > limit) {
+      randomOffset = Math.floor(Math.random() * (count - limit));
+    }
+
+    let dataQuery = supabase
+      .from("Photo")
+      .select(
+        `
+        *,
+        Airport ( name, icao_code ),
+        SpecificAircraft!inner (
+          AircraftType!inner ( id, manufacturer, type, variant )
+        )
+      `,
+      )
+      .range(randomOffset, randomOffset + limit - 1); // Supabase range is inclusive
+
+    dataQuery = applyFilters(dataQuery);
+
+    const { data, error: dataError } = await dataQuery;
+
+    if (dataError) throw dataError;
+
+    res.json({
+      data,
+      meta: {
+        total: count,
+        limit,
+        offset: randomOffset, // Useful for debugging
+      },
+    });
+  } catch (err) {
+    console.error(err);
     res.status(500).json({ error: err.message });
   }
 });
