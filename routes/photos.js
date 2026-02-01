@@ -96,13 +96,14 @@ router.get("/my-photos", authenticateToken, async (req, res) => {
 router.get("/my-photos/random", authenticateToken, async (req, res) => {
   try {
     // 1. Parse Inputs
-    const limit = 10; // Fixed internal limit as per original code
+    const limit = 5; // Fixed internal limit as per original code
     const search = req.query.search || "";
     // Route 2 filters using the nested relationship string
     const aircraftTypeFilter = req.query.aircraftTypeFilter
       ? JSON.parse(req.query.aircraftTypeFilter)
       : [];
-    const filterColumn = "SpecificAircraft.AircraftType.type";
+
+    const filterColumn = "SpecificAircraft.type_id";
 
     const filterParams = {
       userId: req.user.id,
@@ -111,10 +112,9 @@ router.get("/my-photos/random", authenticateToken, async (req, res) => {
       filterColumn,
     };
 
-    // 2. Get Count (Head Query)
     let countQuery = supabase
       .from("Photo")
-      .select("SpecificAircraft!inner(AircraftType!inner(type))", {
+      .select("SpecificAircraft!inner(type_id)", {
         count: "exact",
         head: true,
       });
