@@ -165,7 +165,22 @@ router.get("/airline-counts", authenticateToken, async (req, res) => {
   try {
     const { data, error } = await supabase.rpc("get_airline_counts_by_user", {
       p_user_id: req.user.id,
-      p_limit: 10,
+      p_limit: req.query.limit ? parseInt(req.query.limit) : 10,
+    });
+
+    if (error) throw error;
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/airport-counts", authenticateToken, async (req, res) => {
+  try {
+    const { data, error } = await supabase.rpc("get_airport_counts_by_user", {
+      p_user_id: req.user.id,
+      p_limit: req.query.limit ? parseInt(req.query.limit) : 10,
     });
 
     if (error) throw error;
@@ -192,13 +207,51 @@ router.get("/airplane-counts", authenticateToken, async (req, res) => {
   }
 });
 
+router.get("/manufacturer-counts", authenticateToken, async (req, res) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit) : 8;
+    const { data, error } = await supabase.rpc(
+      "get_manufacturer_counts_by_user",
+      {
+        p_user_id: req.user.id,
+        p_limit: limit,
+      },
+    );
+
+    if (error) throw error;
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get("/most-seen-aircraft", authenticateToken, async (req, res) => {
+  try {
+    const limit = req.query.limit ? parseInt(req.query.limit) : 8;
+    const { data, error } = await supabase.rpc(
+      "get_most_seen_aircraft_by_user",
+      {
+        p_user_id: req.user.id,
+        p_limit: limit,
+      },
+    );
+
+    if (error) throw error;
+
+    res.json(data);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get("/photo-counts", authenticateToken, async (req, res) => {
   try {
     const { data, error } = await supabase.rpc(
       "get_user_photo_counts_by_user_and_by_year",
       {
         p_user_id: req.user.id,
-        p_num_years: 5,
+        p_num_years: req.query.num_years ? parseInt(req.query.num_years) : 5,
       },
     );
 
