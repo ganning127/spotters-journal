@@ -60,7 +60,7 @@ router.get("/search", authenticateToken, async (req, res) => {
         // Filter Photos to only show the user's photos
         const userPhotos = resultObj.Photo.filter(
           (photo) => photo.user_id === req.user.id,
-        );
+        ).sort((a, b) => new Date(b.taken_at) - new Date(a.taken_at));
 
         return {
           ...resultObj,
