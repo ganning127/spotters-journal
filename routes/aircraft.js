@@ -19,19 +19,27 @@ router.get("/search", authenticateToken, async (req, res) => {
       .from("RegistrationHistory")
       .select(
         `
+        uuid_rh,
+        airline,
+        Airline ( name ),
         SpecificAircraft!inner (
-          icao_type
+          icao_type,
+          AircraftType!inner (
+            manufacturer,
+            type,
+            variant
+          )
         ),
         Photo!left (         
           image_url, 
           taken_at,
-          airport_code
+          airport_code,
+          user_id
         )
       `,
       )
       .eq("registration", query.toUpperCase())
-      .eq("Photo.user_id", req.user.id)
-      .limit(1);
+      .order("created_at", { ascending: false });
 
     if (error) throw error;
 
@@ -41,12 +49,31 @@ router.get("/search", authenticateToken, async (req, res) => {
       });
       return;
     } else {
+      const results = data.map((resultObj) => {
+        const flattenedSpecificAircraft = {
+          icao_type: resultObj.SpecificAircraft.icao_type,
+          manufacturer: resultObj.SpecificAircraft.AircraftType.manufacturer,
+          type: resultObj.SpecificAircraft.AircraftType.type,
+          variant: resultObj.SpecificAircraft.AircraftType.variant,
+        };
+
+        // Filter Photos to only show the user's photos
+        const userPhotos = resultObj.Photo.filter(
+          (photo) => photo.user_id === req.user.id,
+        );
+
+        return {
+          ...resultObj,
+          type_id: resultObj.SpecificAircraft.icao_type,
+          airline_name: resultObj.Airline?.name,
+          SpecificAircraft: flattenedSpecificAircraft,
+          Photo: userPhotos, // Override with filtered photos
+        };
+      });
+
       res.json({
         is_new_aircraft: false,
-        aircraft: {
-          ...data[0],
-          type_id: data[0].SpecificAircraft.icao_type, // Maintain compatibility or update frontend to read from nested
-        },
+        aircraft: results,
       });
       return;
     }

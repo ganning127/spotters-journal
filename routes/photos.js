@@ -285,6 +285,9 @@ router.post(
       manufactured_date, // optional
       airline_code, // optional
 
+      // Registration History ID (optional, reuse existing)
+      uuid_rh,
+
       // Airport fields (if airport_code is 'other')
       airport_icao_code,
       airport_name,
@@ -361,57 +364,60 @@ router.post(
         airport_code = airport_icao_code.toUpperCase();
       }
 
-      let uuid_rh = null;
+      // If uuid_rh is provided (reusing existing history), we skip creation.
+      // Otherwise, we create new history or look it up.
+      if (!uuid_rh) {
+        if (aircraft_type_id) {
+            // Create Specific Aircraft
+            const { data: saData, error: saError } = await supabase
+            .from("SpecificAircraft")
+            .insert([{ icao_type: aircraft_type_id, manufactured_date }])
+            .select()
+            .single();
 
-      if (aircraft_type_id) {
-        // Create Specific Aircraft
-        const { data: saData, error: saError } = await supabase
-          .from("SpecificAircraft")
-          .insert([{ icao_type: aircraft_type_id, manufactured_date }])
-          .select()
-          .single();
+            if (saError) {
+            return res.status(500).json({
+                error: `Failed to insert specific aircraft: ${saError.message}`,
+            });
+            }
 
-        if (saError) {
-          return res.status(500).json({
-            error: `Failed to insert specific aircraft: ${saError.message}`,
-          });
-        }
+            // Create Registration History
+            const { data: rhData, error: rhError } = await supabase
+            .from("RegistrationHistory")
+            .insert([
+                {
+                uuid_sa: saData.uuid,
+                registration: registration.toUpperCase(),
+                airline: airline_code,
+                is_current: true, // Assuming new entries are current
+                },
+            ])
+            .select()
+            .single();
+            if (rhError) {
+            return res.status(500).json({
+                error: `Failed to insert registration history: ${rhError.message}`,
+            });
+            }
+            uuid_rh = rhData.uuid_rh;
+        } else {
+            // Fallback: Try to find existing registration (should generally be handled by specific selection now)
+            const { data: rhData, error: rhLookupError } = await supabase
+            .from("RegistrationHistory")
+            .select("uuid_rh")
+            .eq("registration", registration.toUpperCase())
+            .limit(1);
 
-        // Create Registration History
-        const { data: rhData, error: rhError } = await supabase
-          .from("RegistrationHistory")
-          .insert([
-            {
-              uuid_sa: saData.uuid,
-              registration: registration.toUpperCase(),
-              airline: airline_code,
-              is_current: true,
-            },
-          ])
-          .select()
-          .single();
-        if (rhError) {
-          return res.status(500).json({
-            error: `Failed to insert registration history: ${rhError.message}`,
-          });
+            if (rhLookupError) {
+            return res.status(500).json({ error: rhLookupError.message });
+            }
+            if (!rhData || rhData.length === 0) {
+            return res.status(404).json({
+                error: "Registration not found. Please provide aircraft details.",
+            });
+            }
+            uuid_rh = rhData[0].uuid_rh;
         }
-        uuid_rh = rhData.uuid_rh;
-      } else {
-        const { data: rhData, error: rhLookupError } = await supabase
-          .from("RegistrationHistory")
-          .select("uuid_rh")
-          .eq("registration", registration.toUpperCase())
-          .limit(1);
-
-        if (rhLookupError) {
-          return res.status(500).json({ error: rhLookupError.message });
-        }
-        if (!rhData || rhData.length === 0) {
-          return res.status(404).json({
-            error: "Registration not found. Please provide aircraft details.",
-          });
-        }
-        uuid_rh = rhData[0].uuid_rh;
       }
 
       // Insert Photo

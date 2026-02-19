@@ -58,6 +58,10 @@ create table public."RegistrationHistory" (
   constraint RegistrationHistory_uuid_sa_fkey foreign KEY (uuid_sa) references "SpecificAircraft" (uuid) on delete CASCADE
 ) TABLESPACE pg_default;
 
+ALTER TABLE public."RegistrationHistory"
+ADD CONSTRAINT RegistrationHistory_registration_airline_key 
+UNIQUE (registration, airline);
+
 create index IF not exists idx_reghist_uuid_sa on public."RegistrationHistory" using btree (uuid_sa) TABLESPACE pg_default;
 
 create table public."SpecificAircraft" (
