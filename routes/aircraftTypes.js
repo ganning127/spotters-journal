@@ -12,12 +12,12 @@ const requireAdmin = (req, res, next) => {
 };
 
 router.post("/", authenticateToken, requireAdmin, async (req, res) => {
-  const { id, manufacturer, type, variant } = req.body;
+  const { icao_type, manufacturer, type, variant } = req.body;
 
-  if (!id || !manufacturer || !type) {
+  if (!icao_type || !manufacturer || !type) {
     return res
       .status(400)
-      .json({ error: "ID, Manufacturer, and Type are required" });
+      .json({ error: "ICAO Type, Manufacturer, and Type are required" });
   }
 
   try {
@@ -25,7 +25,7 @@ router.post("/", authenticateToken, requireAdmin, async (req, res) => {
       .from("AircraftType")
       .insert([
         {
-          id: id.toUpperCase(),
+          icao_type: icao_type.toUpperCase(),
           manufacturer,
           type,
           variant,
@@ -40,7 +40,7 @@ router.post("/", authenticateToken, requireAdmin, async (req, res) => {
     if (err.code === "23505") {
       return res
         .status(409)
-        .json({ error: "Aircraft Type with this ID already exists." });
+        .json({ error: "Aircraft Type with this ICAO Type already exists." });
     }
     res.status(500).json({ error: err.message });
   }

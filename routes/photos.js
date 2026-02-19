@@ -8,8 +8,14 @@ const authenticateToken = require("../middleware/authMiddleware");
 const BASE_SELECT = `
   *,
   Airport ( name, icao_code ),
-  SpecificAircraft!inner (
-    AircraftType!inner ( id, manufacturer, type, variant )
+  RegistrationHistory!inner (
+    registration,
+    airline,
+    is_current,
+    SpecificAircraft!inner (
+      manufactured_date,
+      AircraftType!inner ( icao_type, manufacturer, type, variant )
+    )
   )
 `;
 
@@ -31,12 +37,15 @@ const applyPhotoFilters = (
 
   // Search Filter (Registration)
   if (search) {
-    query = query.ilike("registration", `%${search}%`);
+    // Filter on the joined RegistrationHistory table
+    query = query.ilike("RegistrationHistory.registration", `%${search}%`);
   }
 
   // Aircraft Type Filter
   // We use filterColumn to support the different targeting strategies of your two routes
   if (filterArray && filterArray.length > 0) {
+    // Note: filterColumn must now act on the nested relationship
+    // e.g. "RegistrationHistory.SpecificAircraft.icao_type"
     query = query.in(filterColumn, filterArray);
   }
 
@@ -55,7 +64,7 @@ router.get("/my-photos", authenticateToken, async (req, res) => {
     const aircraftTypeFilter = req.query.aircraftTypeFilter
       ? JSON.parse(req.query.aircraftTypeFilter)
       : [];
-    const filterColumn = "SpecificAircraft.type_id";
+    const filterColumn = "RegistrationHistory.SpecificAircraft.icao_type";
 
     // 2. Build Query
     let query = supabase
@@ -103,7 +112,7 @@ router.get("/my-photos/random", authenticateToken, async (req, res) => {
       ? JSON.parse(req.query.aircraftTypeFilter)
       : [];
 
-    const filterColumn = "SpecificAircraft.type_id";
+    const filterColumn = "RegistrationHistory.SpecificAircraft.icao_type";
 
     const filterParams = {
       userId: req.user.id,
@@ -114,7 +123,7 @@ router.get("/my-photos/random", authenticateToken, async (req, res) => {
 
     let countQuery = supabase
       .from("Photo")
-      .select("SpecificAircraft!inner(type_id)", {
+      .select("RegistrationHistory!inner(SpecificAircraft!inner(icao_type))", {
         count: "exact",
         head: true,
       });
@@ -319,25 +328,68 @@ router.post("/", authenticateToken, async (req, res) => {
       airport_code = airport_icao_code.toUpperCase(); // set airport_code to use for the photo
     }
 
-    // in case user is adding a new SpecificAircraft
+    let uuid_rh = null;
+
+    // in case user is adding a new SpecificAircraft (or new registration context)
     if (aircraft_type_id) {
-      // trying to create a new SpecificAircraft
-      const { error: typeError } = await supabase
+      // 1. Create SpecificAircraft
+      const { data: saData, error: saError } = await supabase
         .from("SpecificAircraft")
         .insert([
           {
-            registration,
-            type_id: aircraft_type_id,
+            icao_type: aircraft_type_id,
             manufactured_date: manufactured_date || null,
-            airline: airline_code,
           },
-        ]);
+        ])
+        .select()
+        .single();
 
-      if (typeError) {
+      if (saError) {
         return res.status(500).json({
-          error: `Failed to insert specific aircraft: ${typeError.message}`,
+          error: `Failed to insert specific aircraft: ${saError.message}`,
         });
       }
+
+      // 2. Create RegistrationHistory
+      // Note: We assume this new entry is 'current'
+      const { data: rhData, error: rhError } = await supabase
+        .from("RegistrationHistory")
+        .insert([
+          {
+            uuid_sa: saData.uuid,
+            registration: registration.toUpperCase(),
+            airline: airline_code,
+            is_current: true,
+          },
+        ])
+        .select()
+        .single();
+
+      if (rhError) {
+        return res.status(500).json({
+          error: `Failed to insert registration history: ${rhError.message}`,
+        });
+      }
+      uuid_rh = rhData.uuid_rh;
+    } else {
+      // Existing aircraft flow: Find uuid_rh by registration
+      // We prefer the 'current' one if multiple exist, or just the first one.
+      const { data: rhData, error: rhLookupError } = await supabase
+        .from("RegistrationHistory")
+        .select("uuid_rh")
+        .eq("registration", registration.toUpperCase())
+        .limit(1);
+
+      if (rhLookupError) {
+        return res.status(500).json({ error: rhLookupError.message });
+      }
+
+      if (!rhData || rhData.length === 0) {
+        return res
+          .status(404)
+          .json({ error: "Registration not found. Please provide aircraft details." });
+      }
+      uuid_rh = rhData[0].uuid_rh;
     }
 
     const { data, error } = await supabase
@@ -345,7 +397,7 @@ router.post("/", authenticateToken, async (req, res) => {
       .insert([
         {
           user_id: req.user.id,
-          registration,
+          uuid_rh: uuid_rh,
           airport_code,
           image_url,
           taken_at: taken_at || null,

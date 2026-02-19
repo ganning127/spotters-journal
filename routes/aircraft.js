@@ -16,10 +16,12 @@ router.get("/search", authenticateToken, async (req, res) => {
 
   try {
     const { data, error } = await supabase
-      .from("SpecificAircraft")
+      .from("RegistrationHistory")
       .select(
         `
-        type_id,
+        SpecificAircraft!inner (
+          icao_type
+        ),
         Photo!left (         
           image_url, 
           taken_at,
@@ -41,7 +43,10 @@ router.get("/search", authenticateToken, async (req, res) => {
     } else {
       res.json({
         is_new_aircraft: false,
-        aircraft: data[0],
+        aircraft: {
+          ...data[0],
+          type_id: data[0].SpecificAircraft.icao_type, // Maintain compatibility or update frontend to read from nested
+        },
       });
       return;
     }
