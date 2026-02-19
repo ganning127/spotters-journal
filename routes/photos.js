@@ -3,8 +3,23 @@ const express = require("express");
 const router = express.Router();
 const supabase = require("../db");
 const authenticateToken = require("../middleware/authMiddleware");
+const multer = require("multer");
+const sharp = require("sharp");
+const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const crypto = require("crypto");
 
-// 1. Shared Constants & Helpers
+// --- S3 Configuration ---
+const s3 = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+});
+
+const storage = multer.memoryStorage();
+const upload = multer({ storage: storage });
+
 const BASE_SELECT = `
   *,
   Airport ( name, icao_code ),
@@ -21,31 +36,18 @@ const BASE_SELECT = `
 
 /**
  * Applies the standard filters used by both routes.
- * @param {SupabaseClient} supabaseQuery - The query builder instance
- * @param {Object} params - Filter parameters
- * @param {string} params.userId - The authenticated user's ID
- * @param {string} params.search - Search string for registration
- * @param {Array} params.filterArray - Array of aircraft types/ids to filter
- * @param {string} params.filterColumn - The specific DB column to target for the array filter
  */
 const applyPhotoFilters = (
   query,
   { userId, search, filterArray, filterColumn },
 ) => {
-  // Always filter by User
   query = query.eq("user_id", userId);
 
-  // Search Filter (Registration)
   if (search) {
-    // Filter on the joined RegistrationHistory table
     query = query.ilike("RegistrationHistory.registration", `%${search}%`);
   }
 
-  // Aircraft Type Filter
-  // We use filterColumn to support the different targeting strategies of your two routes
   if (filterArray && filterArray.length > 0) {
-    // Note: filterColumn must now act on the nested relationship
-    // e.g. "RegistrationHistory.SpecificAircraft.icao_type"
     query = query.in(filterColumn, filterArray);
   }
 
@@ -56,23 +58,19 @@ const applyPhotoFilters = (
 
 router.get("/my-photos", authenticateToken, async (req, res) => {
   try {
-    // 1. Parse Inputs
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 9;
     const search = req.query.search || "";
-    // Route 1 filters using the direct ID column
     const aircraftTypeFilter = req.query.aircraftTypeFilter
       ? JSON.parse(req.query.aircraftTypeFilter)
       : [];
     const filterColumn = "RegistrationHistory.SpecificAircraft.icao_type";
 
-    // 2. Build Query
     let query = supabase
       .from("Photo")
       .select(BASE_SELECT, { count: "exact" })
       .order("taken_at", { ascending: false });
 
-    // 3. Apply Filters
     query = applyPhotoFilters(query, {
       userId: req.user.id,
       search,
@@ -80,14 +78,12 @@ router.get("/my-photos", authenticateToken, async (req, res) => {
       filterColumn,
     });
 
-    // 4. Apply Pagination Range
     const from = (page - 1) * limit;
     const to = from + limit - 1;
     const { data, error, count } = await query.range(from, to);
 
     if (error) throw error;
 
-    // 5. Return Response
     res.json({
       data,
       meta: {
@@ -104,10 +100,8 @@ router.get("/my-photos", authenticateToken, async (req, res) => {
 
 router.get("/my-photos/random", authenticateToken, async (req, res) => {
   try {
-    // 1. Parse Inputs
-    const limit = 5; // Fixed internal limit as per original code
+    const limit = 5;
     const search = req.query.search || "";
-    // Route 2 filters using the nested relationship string
     const aircraftTypeFilter = req.query.aircraftTypeFilter
       ? JSON.parse(req.query.aircraftTypeFilter)
       : [];
@@ -137,13 +131,11 @@ router.get("/my-photos/random", authenticateToken, async (req, res) => {
       return res.json({ data: [], meta: { total: 0, limit } });
     }
 
-    // 3. Calculate Random Offset
     let randomOffset = 0;
     if (count > limit) {
       randomOffset = Math.floor(Math.random() * (count - limit));
     }
 
-    // 4. Fetch Data (with Offset)
     let dataQuery = supabase.from("Photo").select(BASE_SELECT);
 
     dataQuery = applyPhotoFilters(dataQuery, filterParams);
@@ -155,7 +147,6 @@ router.get("/my-photos/random", authenticateToken, async (req, res) => {
 
     if (dataError) throw dataError;
 
-    // 5. Return Response
     res.json({
       data,
       meta: {
@@ -272,150 +263,185 @@ router.get("/photo-counts", authenticateToken, async (req, res) => {
   }
 });
 
-router.post("/", authenticateToken, async (req, res) => {
-  let {
-    registration,
-    airport_code,
-    image_url,
-    taken_at,
-    shutter_speed,
-    iso,
-    aperture,
-    camera_model,
-    focal_length,
+// --- UPDATED POST ROUTE ---
+router.post(
+  "/",
+  authenticateToken,
+  upload.single("image"), // Expect a file field named "image"
+  async (req, res) => {
+    let {
+      registration,
+      airport_code,
+      
+      taken_at,
+      shutter_speed,
+      iso,
+      aperture,
+      camera_model,
+      focal_length,
 
-    // SpecificAircraft fields
-    aircraft_type_id, // optional
-    manufactured_date, // optional
-    airline_code, // optional
+      // SpecificAircraft fields
+      aircraft_type_id, // optional
+      manufactured_date, // optional
+      airline_code, // optional
 
-    // Airport fields (if airport_code is 'other')
-    airport_icao_code, // all below are optional
-    airport_name,
-    airport_latitude,
-    airport_longitude,
-  } = req.body;
+      // Airport fields (if airport_code is 'other')
+      airport_icao_code,
+      airport_name,
+      airport_latitude,
+      airport_longitude,
+    } = req.body;
 
-  try {
-    // in case user is adding a new airport
-    if (airport_code === "other") {
-      if (
-        !airport_icao_code ||
-        !airport_name ||
-        !airport_latitude ||
-        !airport_longitude
-      ) {
-        return res.status(400).json({
-          error: "All airport fields are required for 'other' airport.",
-        });
-      }
+    // Default nulls if empty strings
+    taken_at = taken_at || null;
+    shutter_speed = shutter_speed || null;
+    iso = iso || null;
+    aperture = aperture || null;
+    camera_model = camera_model || null;
+    focal_length = focal_length || null;
+    manufactured_date = manufactured_date || null;
 
-      const { error: airportError } = await supabase.from("Airport").insert([
-        {
-          icao_code: airport_icao_code.toUpperCase(),
-          name: airport_name,
-          latitude: parseFloat(airport_latitude),
-          longitude: parseFloat(airport_longitude),
-        },
-      ]);
-
-      if (airportError) {
-        return res
-          .status(500)
-          .json({ error: `Failed to insert airport: ${airportError.message}` });
-      }
-
-      airport_code = airport_icao_code.toUpperCase(); // set airport_code to use for the photo
+    if (!req.file) {
+      return res.status(400).json({ error: "Image file is required." });
     }
 
-    let uuid_rh = null;
+    try {
+      // 1. Process Image
+      // Resize to ensure it's under ~500KB (heuristic: 1920px max width, 80% quality)
+      const buffer = await sharp(req.file.buffer)
+        .resize({ width: 1920, withoutEnlargement: true })
+        .jpeg({ quality: 80, mozjpeg: true }) 
+        .toBuffer();
 
-    // in case user is adding a new SpecificAircraft (or new registration context)
-    if (aircraft_type_id) {
-      // 1. Create SpecificAircraft
-      const { data: saData, error: saError } = await supabase
-        .from("SpecificAircraft")
+      // Determine if it's actually under 500KB
+      // If not, could resize more aggressively, but 80% quality jpeg at 1920px is typically small enough.
+      
+      // 2. Upload to S3
+      const fileName = crypto.randomBytes(16).toString("hex") + ".jpg";
+      const params = {
+        Bucket: process.env.AWS_BUCKET_NAME,
+        Key: `photos/${req.user.id}/${fileName}`,
+        Body: buffer,
+        ContentType: "image/jpeg",
+        // ACL: 'public-read' // Optional if using bucket policy
+      };
+
+      const command = new PutObjectCommand(params);
+      await s3.send(command);
+
+      const image_url = `https://${process.env.AWS_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/photos/${req.user.id}/${fileName}`;
+
+      // 3. Database Operations (Airport, Aircraft, Photo)
+      
+      // ... (Same logic as before for Airport/Aircraft) ...
+      if (airport_code === "other") {
+        if (
+          !airport_icao_code ||
+          !airport_name ||
+          !airport_latitude ||
+          !airport_longitude
+        ) {
+          return res.status(400).json({
+            error: "All airport fields are required for 'other' airport.",
+          });
+        }
+        const { error: airportError } = await supabase.from("Airport").insert([
+          {
+            icao_code: airport_icao_code.toUpperCase(),
+            name: airport_name,
+            latitude: parseFloat(airport_latitude),
+            longitude: parseFloat(airport_longitude),
+          },
+        ]);
+        if (airportError) {
+          return res.status(500).json({
+            error: `Failed to insert airport: ${airportError.message}`,
+          });
+        }
+        airport_code = airport_icao_code.toUpperCase();
+      }
+
+      let uuid_rh = null;
+
+      if (aircraft_type_id) {
+        // Create Specific Aircraft
+        const { data: saData, error: saError } = await supabase
+          .from("SpecificAircraft")
+          .insert([{ icao_type: aircraft_type_id, manufactured_date }])
+          .select()
+          .single();
+
+        if (saError) {
+          return res.status(500).json({
+            error: `Failed to insert specific aircraft: ${saError.message}`,
+          });
+        }
+
+        // Create Registration History
+        const { data: rhData, error: rhError } = await supabase
+          .from("RegistrationHistory")
+          .insert([
+            {
+              uuid_sa: saData.uuid,
+              registration: registration.toUpperCase(),
+              airline: airline_code,
+              is_current: true,
+            },
+          ])
+          .select()
+          .single();
+        if (rhError) {
+          return res.status(500).json({
+            error: `Failed to insert registration history: ${rhError.message}`,
+          });
+        }
+        uuid_rh = rhData.uuid_rh;
+      } else {
+        const { data: rhData, error: rhLookupError } = await supabase
+          .from("RegistrationHistory")
+          .select("uuid_rh")
+          .eq("registration", registration.toUpperCase())
+          .limit(1);
+
+        if (rhLookupError) {
+          return res.status(500).json({ error: rhLookupError.message });
+        }
+        if (!rhData || rhData.length === 0) {
+          return res.status(404).json({
+            error: "Registration not found. Please provide aircraft details.",
+          });
+        }
+        uuid_rh = rhData[0].uuid_rh;
+      }
+
+      // Insert Photo
+      const { data, error } = await supabase
+        .from("Photo")
         .insert([
           {
-            icao_type: aircraft_type_id,
-            manufactured_date: manufactured_date || null,
+            user_id: req.user.id,
+            uuid_rh: uuid_rh,
+            airport_code,
+            image_url, // S3 URL
+            taken_at,
+            shutter_speed,
+            iso,
+            aperture,
+            camera_model,
+            focal_length,
           },
         ])
-        .select()
-        .single();
+        .select();
 
-      if (saError) {
-        return res.status(500).json({
-          error: `Failed to insert specific aircraft: ${saError.message}`,
-        });
-      }
+      if (error) throw error;
+      res.status(201).json(data[0]);
 
-      // 2. Create RegistrationHistory
-      // Note: We assume this new entry is 'current'
-      const { data: rhData, error: rhError } = await supabase
-        .from("RegistrationHistory")
-        .insert([
-          {
-            uuid_sa: saData.uuid,
-            registration: registration.toUpperCase(),
-            airline: airline_code,
-            is_current: true,
-          },
-        ])
-        .select()
-        .single();
-
-      if (rhError) {
-        return res.status(500).json({
-          error: `Failed to insert registration history: ${rhError.message}`,
-        });
-      }
-      uuid_rh = rhData.uuid_rh;
-    } else {
-      // Existing aircraft flow: Find uuid_rh by registration
-      // We prefer the 'current' one if multiple exist, or just the first one.
-      const { data: rhData, error: rhLookupError } = await supabase
-        .from("RegistrationHistory")
-        .select("uuid_rh")
-        .eq("registration", registration.toUpperCase())
-        .limit(1);
-
-      if (rhLookupError) {
-        return res.status(500).json({ error: rhLookupError.message });
-      }
-
-      if (!rhData || rhData.length === 0) {
-        return res
-          .status(404)
-          .json({ error: "Registration not found. Please provide aircraft details." });
-      }
-      uuid_rh = rhData[0].uuid_rh;
+    } catch (err) {
+      console.error(err);
+      res.status(500).json({ error: err.message });
     }
-
-    const { data, error } = await supabase
-      .from("Photo")
-      .insert([
-        {
-          user_id: req.user.id,
-          uuid_rh: uuid_rh,
-          airport_code,
-          image_url,
-          taken_at: taken_at || null,
-          shutter_speed: shutter_speed || null,
-          iso: iso || null,
-          aperture: aperture || null,
-          camera_model: camera_model || null,
-          focal_length: focal_length || null,
-        },
-      ])
-      .select();
-
-    if (error) throw error;
-    res.status(201).json(data[0]);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+  },
+);
 
 router.delete("/:id", authenticateToken, async (req, res) => {
   try {
@@ -423,7 +449,7 @@ router.delete("/:id", authenticateToken, async (req, res) => {
       .from("Photo")
       .delete()
       .eq("id", req.params.id)
-      .eq("user_id", req.user.id); // Critical security check
+      .eq("user_id", req.user.id);
 
     if (error) throw error;
     res.json({ message: "Photo deleted successfully" });
